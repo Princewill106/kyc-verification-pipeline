@@ -1,0 +1,12 @@
+[
+ {"customer_id": "CUS-101", "form": {"full_name": "Adaeze Nwosu", "date_of_birth": "1995-04-12"}, "face_match_score": 0.93,
+  "document_text": "FEDERAL REPUBLIC OF NIGERIA\nNational Identity Card\nNIN: 12345678901\nName: NWOSU ADAEZE\nDate of Birth: 1995-04-12\nExpiry: 2030-01-01"},
+ {"customer_id": "CUS-102", "form": {"full_name": "Kunle Adebayo", "date_of_birth": "1988-09-30"}, "face_match_score": 0.9,
+  "document_text": "IKEJA ELECTRIC\nElectricity bill\nMeter No: 4500123\nAmount due: 18,400"},
+ {"customer_id": "CUS-103", "form": {"full_name": "Fatima Sule", "date_of_birth": "1990-02-02"}, "face_match_score": 0.88,
+  "document_text": "PASSPORT\nNationality: NGA\nPassport No: A0912345\nName: FATIMA SULE\nDate of Birth: 1990-02-02\nExpiry: 2025-06-30"},
+ {"customer_id": "CUS-104", "form": {"full_name": "Emeka John Obi", "date_of_birth": "1992-11-15"}, "face_match_score": 0.91,
+  "document_text": "Driver's Licence\nLicense No: LAG-77812\nName: EMEKA OBI\nDate of Birth: 1992-11-15\nExpiry: 2028-03-01"},
+ {"customer_id": "CUS-105", "form": {"full_name": "Blessing Udo", "date_of_birth": "1998-07-21"}, "face_match_score": 0.95,
+  "document_text": "National Identity Card\nNIN: 99887766554\nName: BLESSING UDO\nDate of Birth: 1997-07-21\nExpiry: 2031-05-05"}
+]

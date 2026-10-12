@@ -1,0 +1,320 @@
+{
+  "name": "KYC Verification Pipeline (AI Automation Projects #3)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kyc",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6740ae58-6291-5ffc-bd1d-46ba35fb1219",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "510638f8-0c17-51d3-8cc4-943f2eb5bf8d"
+    },
+    {
+      "parameters": {},
+      "id": "f777c3e4-4413-5c05-bbef-f52aaf90b935",
+      "name": "Test with sample data",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sample data from this repo. Click 'Test workflow' to run the whole flow on it.\nconst sample = [\n {\n  \"customer_id\": \"CUS-101\",\n  \"form\": {\n   \"full_name\": \"Adaeze Nwosu\",\n   \"date_of_birth\": \"1995-04-12\"\n  },\n  \"face_match_score\": 0.93,\n  \"document_text\": \"FEDERAL REPUBLIC OF NIGERIA\\nNational Identity Card\\nNIN: 12345678901\\nName: NWOSU ADAEZE\\nDate of Birth: 1995-04-12\\nExpiry: 2030-01-01\"\n },\n {\n  \"customer_id\": \"CUS-102\",\n  \"form\": {\n   \"full_name\": \"Kunle Adebayo\",\n   \"date_of_birth\": \"1988-09-30\"\n  },\n  \"face_match_score\": 0.9,\n  \"document_text\": \"IKEJA ELECTRIC\\nElectricity bill\\nMeter No: 4500123\\nAmount due: 18,400\"\n },\n {\n  \"customer_id\": \"CUS-103\",\n  \"form\": {\n   \"full_name\": \"Fatima Sule\",\n   \"date_of_birth\": \"1990-02-02\"\n  },\n  \"face_match_score\": 0.88,\n  \"document_text\": \"PASSPORT\\nNationality: NGA\\nPassport No: A0912345\\nName: FATIMA SULE\\nDate of Birth: 1990-02-02\\nExpiry: 2025-06-30\"\n },\n {\n  \"customer_id\": \"CUS-104\",\n  \"form\": {\n   \"full_name\": \"Emeka John Obi\",\n   \"date_of_birth\": \"1992-11-15\"\n  },\n  \"face_match_score\": 0.91,\n  \"document_text\": \"Driver's Licence\\nLicense No: LAG-77812\\nName: EMEKA OBI\\nDate of Birth: 1992-11-15\\nExpiry: 2028-03-01\"\n },\n {\n  \"customer_id\": \"CUS-105\",\n  \"form\": {\n   \"full_name\": \"Blessing Udo\",\n   \"date_of_birth\": \"1998-07-21\"\n  },\n  \"face_match_score\": 0.95,\n  \"document_text\": \"National Identity Card\\nNIN: 99887766554\\nName: BLESSING UDO\\nDate of Birth: 1997-07-21\\nExpiry: 2031-05-05\"\n }\n];\nreturn sample.map(json => ({ json }));"
+      },
+      "id": "735e41a3-379a-512e-9ec2-b9cb6afbef5c",
+      "name": "Sample data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// KYC Verification Pipeline: core logic (ported from main.py)\n\n// ---- input normaliser (works for Webhook, Form, WhatsApp, Gmail, Sheets and sample data)\nconst input = $input.all().flatMap(i => {\n  const j = i.json || {};\n  if (j.messages && Array.isArray(j.messages)) {           // WhatsApp Trigger\n    return j.messages.filter(m => m.text).map(m => ({ from: '+' + m.from, text: m.text.body }));\n  }\n  if (j.Subject !== undefined || j.From !== undefined) {     // Gmail Trigger (simple)\n    return [{ from: (j.From || '').replace(/.*<|>.*/g, ''), subject: j.Subject || '', body: j.snippet || j.text || '' }];\n  }\n  const b = (j.body !== undefined && j.headers !== undefined) ? j.body : j;   // Webhook wraps payload in body\n  if (Array.isArray(b)) return b;\n  if (b && Array.isArray(b.items)) return b.items;\n  return [b];\n});\n\nconst KEYWORDS = { national_id: ['national identification', 'nin', 'national identity'], passport: ['passport', 'nationality'],\n                   drivers_licence: ['driver', 'licence', 'license no'], utility_bill: ['electricity', 'meter', 'bill', 'disco'] };\nconst ACCEPTED = ['national_id', 'passport', 'drivers_licence'];\nconst today = new Date().toISOString().slice(0, 10);\nconst classify = t => { t = t.toLowerCase(); let best = 'unknown', bs = 0;\n  for (const [k, ws] of Object.entries(KEYWORDS)) { const s = ws.filter(w => t.includes(w)).length; if (s > bs) { bs = s; best = k; } } return best; };\nconst field = (t, label) => { const m = t.match(new RegExp(label + '\\\\s*:\\\\s*(.+)', 'i')); return m ? m[1].trim() : null; };\nconst words = s => (s || '').toLowerCase().replace(/[^a-z ]/g, '').split(/\\s+/).filter(Boolean).sort();\nconst sim = (a, b) => { const A = words(a), B = words(b); const inter = A.filter(w => B.includes(w)).length;\n  return (2 * inter) / (A.length + B.length || 1); };\nconst out = [];\nfor (const s of input) {\n  const doc = s.document_text || '', form = s.form || {}, checks = {};\n  const kind = classify(doc); checks.document_type = kind;\n  let status, reason;\n  if (!ACCEPTED.includes(kind)) { status = 'REJECTED'; reason = `We received a ${kind.replace('_', ' ')}. Please upload a national ID, passport or driver's licence.`; }\n  else {\n    const name = field(doc, 'name'), dob = field(doc, 'date of birth'), exp = field(doc, 'expiry');\n    const ns = sim(name, form.full_name); Object.assign(checks, { name_on_id: name, name_similarity: ns, dob_on_id: dob, expiry: exp });\n    if (exp && exp < (s.today || today)) { status = 'REJECTED'; reason = `Your ID expired on ${exp}. Please upload a valid, unexpired ID.`; }\n    else if (dob !== form.date_of_birth) { status = 'REFERRED'; reason = 'date_of_birth differs between ID and form'; }\n    else if (ns < 0.5) { status = 'REJECTED'; reason = \"The name on your ID doesn't match your signup name.\"; }\n    else if (ns < 0.99 || (s.face_match_score != null && s.face_match_score < 0.8)) { status = 'REFERRED'; reason = ns < 0.99 ? 'name partially matches' : 'low face-match score'; }\n    else { status = 'VERIFIED'; reason = 'all checks passed'; }\n  }\n  out.push({ route: status, customer_id: s.customer_id, status, reason, checks: JSON.stringify(checks) });\n}\nreturn out.map(json => ({ json }));\n"
+      },
+      "id": "5145ef38-b3cf-558a-aafe-eaec55991ea1",
+      "name": "Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "9c3dfe03-eb35-5883-bf8d-ec891f9562e2",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0b43028a-87c3-54bb-8048-1619be3b8a20",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "VERIFIED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "VERIFIED"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a788ae7a-732f-5adf-87f0-248f3ba10dad",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "REJECTED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REJECTED"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e53de396-6f5d-5cc3-8773-0c161e284295",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "REFERRED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REFERRED"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db5de978-b31a-5424-80e3-b9b5ac2d83b6",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        720,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.example.com/accounts/activate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "780703e4-4d31-538b-af4c-d2b2dc9cac4c",
+      "name": "Activate account (your API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.example.com/kyc/rejections",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "398ef5f4-6902-529c-a41b-11a23b99c794",
+      "name": "Tell customer what to resend (your API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#compliance",
+          "mode": "name"
+        },
+        "text": "=KYC {{ $json.customer_id }} needs a human: {{ $json.reason }}",
+        "otherOptions": {}
+      },
+      "id": "43d29a9c-0b38-5122-9861-bd6a186d43aa",
+      "name": "Send to compliance (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        980,
+        300
+      ],
+      "webhookId": "43d29a9c-0b38-5122-9861-bd6a186d43aa"
+    },
+    {
+      "parameters": {
+        "content": "## KYC Verification Pipeline\nVerified, rejected with a fixable reason, or referred to a human: verification in minutes, not days.\n\nPOST a KYC submission: the signup form, the OCR text of the uploaded document and (optionally) a face-match score from your vendor. Returns VERIFIED, REJECTED with a fixable reason, or REFERRED with the field in question.\n\n**Try it:** click *Test workflow* to run on the sample data. Then connect your credentials on the output nodes and activate.\n\nCode and docs: github.com/Princewill106/kyc-verification-pipeline",
+        "height": 340,
+        "width": 420,
+        "color": 5
+      },
+      "id": "65dc722a-6eee-5b5a-b7a8-a4073d923f76",
+      "name": "About this workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -460
+      ]
+    }
+  ],
+  "connections": {
+    "Test with sample data": {
+      "main": [
+        [
+          {
+            "node": "Sample data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample data": {
+      "main": [
+        [
+          {
+            "node": "Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Activate account (your API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell customer what to resend (your API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to compliance (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
